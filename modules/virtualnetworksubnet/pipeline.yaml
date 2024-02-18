@@ -1,0 +1,284 @@
+trigger:
+  batch: true
+  branches:
+    include:
+    - master
+  paths:
+    include:
+    - 'modules/virtualnetwork/**'
+    - 'modules/virtualnetworksubnet/**'
+    - 'modules/networksecuritygroup/**'
+
+variables: 
+# Common pipeline variables
+- name: ServiceConnectionName1
+  value: IaC-Publish
+- name: ServiceConnectionName2
+  value: IaC-Test-RG
+- name: DeploymentLocation
+  value: norwayeast
+- name: ResourceGroupName
+  value: RG-Management
+- name: ModuleRegistryServer
+  value: templatestore13.azurecr.io
+# Variables related to resources
+- name: ModuleName1
+  value: networksecuritygroup
+- name: ModuleFilePath1
+  value: modules/networksecuritygroup/networksecuritygroup.bicep
+- name: ModuleMetadataFilePath1
+  value: modules/networksecuritygroup/metadata.json
+- name: detailedPurposeNSG
+  value: 'network security group created for testing the template'
+- name: sequenceNSG
+  value: 001
+
+- name: ModuleName2
+  value: virtualnetwork
+- name: ModuleFilePath2
+  value: modules/virtualnetwork/virtualnetwork.bicep
+- name: ModuleMetadataFilePath2
+  value: modules/virtualnetwork/metadata.json
+- name: detailedPurposeVNET
+  value: 'virtual network created for testing the template'
+- name: sequenceVNET
+  value: 001
+- name: vnetAddressPrefix
+  value: '192.168.0.0/16'
+
+- name: ModuleName3
+  value: virtualnetworksubnet
+- name: ModuleFilePath3
+  value: modules/virtualnetworksubnet/virtualnetworksubnet.bicep
+- name: ModuleMetadataFilePath3
+  value: modules/virtualnetworksubnet/metadata.json
+- name: sequenceVSNET
+  value: 001
+- name: subnetPrefix
+  value: '192.168.0.0/24'
+
+
+- name: TestScriptFilePath
+  value: modules/virtualnetworksubnet/virtualNetworkResources.bicep
+
+- name: DeploymentNameNSG
+  value: IaC-TestDeployment-NSG
+- name: DeploymentNameVNET
+  value: IaC-TestDeployment-VirtualNetwork
+- name: DeploymentNameSVNET
+  value: IaC-TestDeployment-VirtualNetworkSubnet
+# Subscription
+- name: SubscriptionId
+  value: '2638031b-e819-4081-bacf-43f23a07121c'
+# Variables related to resource group
+- name: RGModuleFilePath
+  value: modules/resourcegroup/resourcegroup.bicep
+- name: RGDeploymentName
+  value: IaC-TestDeployment-ResourceGroup
+- name: purposeShortRG
+  value: 'IaCPubTest'
+- name: detailedPurposeRG
+  value: 'resource group created to test resources before registry update'
+# Common deployment variables
+- name: envCode
+  value: 'dev'
+- name: location
+  value: 'norwayeast'
+- name: ownerteam
+  value: 'TEAM1'
+- name: assetowner
+  value: 'mohit sharma'
+- name: criticality
+  value: 'Low'
+- name: projectCode
+  value: 'TEM1'
+- name: locationCode
+  value: 'noe'
+- name: classification
+  value: 'Public'
+
+
+
+
+pool:
+  name: ubuntu
+
+stages:
+
+- stage: Lint
+  jobs:
+  - job: LintCodeVirtualNetwork
+    displayName: LintCodeVirtualNetwork
+    steps:
+      - script: |
+          az bicep build --file $(ModuleFilePath1)
+        name: LintBicepCode
+        displayName: Run Bicep linter
+
+  - job: LintCodeVirtualNetworkSubnet
+    displayName: LintCodeVirtualNetworkSubnet
+    steps:
+      - script: |
+          az bicep build --file $(ModuleFilePath2)
+        name: LintBicepCode
+        displayName: Run Bicep linter
+
+  - job: LintCodeNetworkSecurityGroup
+    displayName: LintCodeNetworkSecurityGroup
+    steps:
+      - script: |
+          az bicep build --file $(ModuleFilePath3)
+        name: LintBicepCode
+        displayName: Run Bicep linter
+
+
+- stage: TestDeployment
+  jobs:
+  - job: DeployJob
+    steps:
+    - task: AzureResourceManagerTemplateDeployment@3
+      inputs:
+        deploymentScope: 'Subscription'
+        connectedServiceName: $(ServiceConnectionName2)
+        deploymentName: $(RGDeploymentName)
+        location: $(DeploymentLocation)
+        csmFile: $(RGModuleFilePath)
+        overrideParameters: '-envCode "$(envCode)" -location "$(location)" -ownerteam "$(ownerteam)" -assetowner "$(assetowner)" -criticality "$(criticality)" -projectCode "$(projectCode)" -classification "$(classification)" -purposeShort "$(purposeShortRG)" -detailedPurpose "$(detailedPurposeRG)"'
+        deploymentMode: 'Incremental'
+        deploymentOutputs: 'deploymentOutputs'
+
+    - bash: |
+        echo "##vso[task.setvariable variable=ResourceGroupScopeName]$(echo $DEPLOYMENT_OUTPUTS | jq -r '.resourcegroupName.value')"
+        
+      name: SaveDeploymentOutputsRG
+      displayName: Save deployment outputs into variables
+      env:
+        DEPLOYMENT_OUTPUTS: $(deploymentOutputs)
+
+    - bash: |
+        echo $(ResourceGroupScopeName)
+
+    - task: AzureResourceManagerTemplateDeployment@3
+      inputs:
+        resourceGroupName: $(ResourceGroupScopeName)
+        connectedServiceName: $(ServiceConnectionName2)
+        deploymentName: $(DeploymentNameNSG)
+        location: $(DeploymentLocation)
+        csmFile: $(ModuleFilePath1)
+        overrideParameters: '-location "$(location)" -locationCode "$(locationCode)" -projectCode "$(projectCode)" -envCode "$(envCode)" -sequence "$(sequenceNSG)" -detailedPurpose "$(detailedPurposeNSG)" -assetowner "$(assetowner)" -ownerteam "$(ownerteam)" -criticality "$(criticality)" -classification "$(classification)"'
+        deploymentMode: 'Incremental'
+        deploymentOutputs: 'deploymentOutputs'
+
+    - bash: |
+        echo "##vso[task.setvariable variable=NSGId]$(echo $DEPLOYMENT_OUTPUTS | jq -r '.networkSecurityGroupId.value')"
+        
+      name: SaveDeploymentOutputsNSG
+      displayName: Save deployment outputs into variables
+      env:
+        DEPLOYMENT_OUTPUTS: $(deploymentOutputs)
+
+    - bash: |
+        echo $(deploymentOutputs)
+
+    - bash: |
+        echo $(NSGId)
+
+    - task: AzureResourceManagerTemplateDeployment@3
+      inputs:
+        resourceGroupName: $(ResourceGroupScopeName)
+        connectedServiceName: $(ServiceConnectionName2)
+        deploymentName: $(DeploymentNameVNET)
+        location: $(DeploymentLocation)
+        csmFile: $(ModuleFilePath2)
+        overrideParameters: '-location "$(location)" -locationCode "$(locationCode)" -projectCode "$(projectCode)" -envCode "$(envCode)" -sequence "$(sequenceVNET)" -detailedPurpose "$(detailedPurposeVNET)" -assetowner "$(assetowner)" -ownerteam "$(ownerteam)" -criticality "$(criticality)" -classification "$(classification)" -vnetAddressPrefix "$(vnetAddressPrefix)"'
+        deploymentMode: 'Incremental'
+        deploymentOutputs: 'deploymentOutputs'
+
+    - bash: |
+        echo "##vso[task.setvariable variable=VnetName]$(echo $DEPLOYMENT_OUTPUTS | jq -r '.virtualNetworkName.value')"
+        
+      name: SaveDeploymentOutputsVnet
+      displayName: Save deployment outputs into variables
+      env:
+        DEPLOYMENT_OUTPUTS: $(deploymentOutputs)
+
+    - bash: |
+        echo $(VnetName)
+
+    - task: AzureResourceManagerTemplateDeployment@3
+      inputs:
+        resourceGroupName: $(ResourceGroupScopeName)
+        connectedServiceName: $(ServiceConnectionName2)
+        deploymentName: $(DeploymentNameSVNET)
+        location: $(DeploymentLocation)
+        csmFile: $(ModuleFilePath3)
+        overrideParameters: '-locationCode "$(locationCode)" -projectCode "$(projectCode)" -envCode "$(envCode)" -sequence "$(sequenceVSNET)" -networkName "$(VnetName)" -networkSecurityGroupId "$(NSGId)" -subnetPrefix "$(subnetPrefix)"'
+        deploymentMode: 'Incremental'
+        deploymentOutputs: 'deploymentOutputs'
+
+
+
+- stage: Publish
+  dependsOn: 
+  - TestDeployment
+  condition: succeeded('TestDeployment')
+  jobs:
+  - job: PublishNetworkSecurityGroup
+    steps:
+      - script: |
+          majorMinorVersionNumber=$(jq '(.version.major | tostring) + "." + (.version.minor | tostring)' $(ModuleMetadataFilePath1) -r )
+          versionNumber="$majorMinorVersionNumber.$(Build.BuildNumber)"
+          echo "##vso[task.setvariable variable=ModuleVersion;]$versionNumber"
+        name: GetModuleVersionNumber
+        displayName: Get module version number
+      - task: AzureCLI@2
+        name: Publish
+        displayName: Publish module
+        inputs:
+          azureSubscription: $(ServiceConnectionName1)
+          scriptType: 'bash'
+          scriptLocation: 'inlineScript'
+          inlineScript: |
+            az bicep publish \
+              --target 'br:$(ModuleRegistryServer)/$(ModuleName1):$(ModuleVersion)' \
+              --file $(ModuleFilePath1)
+  
+  - job: PublishVirtualNetwork
+    steps:
+      - script: |
+          majorMinorVersionNumber=$(jq '(.version.major | tostring) + "." + (.version.minor | tostring)' $(ModuleMetadataFilePath2) -r )
+          versionNumber="$majorMinorVersionNumber.$(Build.BuildNumber)"
+          echo "##vso[task.setvariable variable=ModuleVersion;]$versionNumber"
+        name: GetModuleVersionNumber
+        displayName: Get module version number
+      - task: AzureCLI@2
+        name: Publish
+        displayName: Publish module
+        inputs:
+          azureSubscription: $(ServiceConnectionName1)
+          scriptType: 'bash'
+          scriptLocation: 'inlineScript'
+          inlineScript: |
+            az bicep publish \
+              --target 'br:$(ModuleRegistryServer)/$(ModuleName2):$(ModuleVersion)' \
+              --file $(ModuleFilePath2)
+
+  - job: PublishVirtualNetworkSubnet
+    steps:
+      - script: |
+          majorMinorVersionNumber=$(jq '(.version.major | tostring) + "." + (.version.minor | tostring)' $(ModuleMetadataFilePath3) -r )
+          versionNumber="$majorMinorVersionNumber.$(Build.BuildNumber)"
+          echo "##vso[task.setvariable variable=ModuleVersion;]$versionNumber"
+        name: GetModuleVersionNumber
+        displayName: Get module version number
+      - task: AzureCLI@2
+        name: Publish
+        displayName: Publish module
+        inputs:
+          azureSubscription: $(ServiceConnectionName1)
+          scriptType: 'bash'
+          scriptLocation: 'inlineScript'
+          inlineScript: |
+            az bicep publish \
+              --target 'br:$(ModuleRegistryServer)/$(ModuleName3):$(ModuleVersion)' \
+              --file $(ModuleFilePath3)

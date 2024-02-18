@@ -1,0 +1,106 @@
+trigger:
+  batch: true
+  branches:
+    include:
+    - master
+  paths:
+    include:
+    - 'modules/resourcegroup/**'
+
+variables: 
+- name: ServiceConnectionName1
+  value: IaC-Publish
+- name: ServiceConnectionName2
+  value: IaC-Test-RG
+- name: DeploymentLocation
+  value: norwayeast
+- name: SubscriptionId
+  value: '2638031b-e819-4081-bacf-43f23a07121c'
+- name: ModuleName
+  value: resourcegroup
+- name: ModuleRegistryServer
+  value: templatestore13.azurecr.io
+- name: ModuleFilePath
+  value: modules/resourcegroup/resourcegroup.bicep
+- name: ModuleMetadataFilePath
+  value: modules/resourcegroup/metadata.json
+- name: DeploymentName
+  value: IaC-TestDeployment-Resourcegroup
+- name: envCode
+  value: 'dev'
+- name: location
+  value: 'norwayeast'
+- name: ownerteam
+  value: 'TEAM1'
+- name: assetowner
+  value: 'mohit sharma'
+- name: criticality
+  value: 'Low'
+- name: projectCode
+  value: 'TEM1'
+- name: locationCode
+  value: 'noe'
+- name: classification
+  value: 'Public'
+- name: purposeShortRG
+  value: 'IaCPubTest'
+- name: detailedPurposeRG
+  value: 'resource group created to test resource before registry update'
+
+pool:
+  name: ubuntu
+
+stages:
+
+- stage: Lint
+  jobs:
+  - job: LintCode
+    displayName: Lint code
+    steps:
+      - script: |
+          az bicep build --file $(ModuleFilePath)
+        name: LintBicepCode
+        displayName: Run Bicep linter
+
+
+
+
+- stage: TestDeployment
+  jobs:
+  - job: DeployJob
+    steps:
+    - task: AzureResourceManagerTemplateDeployment@3
+      inputs:
+        deploymentScope: 'Subscription'
+        connectedServiceName: $(ServiceConnectionName2)
+        deploymentName: $(DeploymentName)
+        location: $(DeploymentLocation)
+        subscriptionId: $(SubscriptionId)
+        csmFile: $(ModuleFilePath)
+        deploymentMode: 'Incremental'
+        overrideParameters: '-envCode "$(envCode)" -location "$(location)" -ownerteam "$(ownerteam)" -assetowner "$(assetowner)" -criticality "$(criticality)" -projectCode "$(projectCode)" -classification "$(classification)" -purposeShort "$(purposeShortRG)" -detailedPurpose "$(detailedPurposeRG)"'
+
+- stage: Publish
+  dependsOn: 
+  - TestDeployment
+  condition: succeeded('TestDeployment')
+  jobs:
+  - job: Publish
+    steps:
+      - script: |
+          majorMinorVersionNumber=$(jq '(.version.major | tostring) + "." + (.version.minor | tostring)' $(ModuleMetadataFilePath) -r )
+          versionNumber="$majorMinorVersionNumber.$(Build.BuildNumber)"
+          echo "##vso[task.setvariable variable=ModuleVersion;]$versionNumber"
+        name: GetModuleVersionNumber
+        displayName: Get module version number
+      - task: AzureCLI@2
+        name: Publish
+        displayName: Publish module
+        inputs:
+          azureSubscription: $(ServiceConnectionName1)
+          scriptType: 'bash'
+          scriptLocation: 'inlineScript'
+          inlineScript: |
+            az bicep publish \
+              --target 'br:$(ModuleRegistryServer)/$(ModuleName):$(ModuleVersion)' \
+              --file $(ModuleFilePath)

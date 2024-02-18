@@ -1,0 +1,158 @@
+trigger:
+  batch: true
+  branches:
+    include:
+    - master
+  paths:
+    include:
+    - 'modules/azuresqlserver/**'
+
+variables: 
+# Common pipeline variables
+- name: ServiceConnectionName
+  value: IaC-Publish
+- name: ServiceConnectionName2
+  value: IaC-Test-RG
+- name: DeploymentLocation
+  value: norwayeast
+- name: ResourceGroupName
+  value: RG-Management
+# Variables related to resource
+- name: ModuleName
+  value: azuresqlserver
+- name: ModuleRegistryServer
+  value: templatestore13.azurecr.io
+- name: ModuleFilePath
+  value: modules/azuresqlserver/azuresqlserver.bicep
+- name: ModuleMetadataFilePath
+  value: modules/azuresqlserver/metadata.json
+- name: DeploymentName
+  value: IaC-TestDeployment-AzureSQLServer
+- name: detailedPurpose
+  value: 'azure sql server created for testing the template'
+- name: sequence
+  value: 001
+- name: administratorLogin
+  value: sqladmin
+- name: administratorLoginPassword
+  value: brMkK9NBL1jhAOz
+- name: publicNetworkAccess
+  value: 'Disabled'
+- name: restrictOutboundNetworkAccess
+  value: 'Disabled'
+- name: azureADOnlyAuthentication
+  value: false
+- name: version
+  value: '12.0'
+- name: principalType
+  value: 'Group'
+- name: aadadminlogin
+  value: 'Mohit - IKT-sikkerhet'
+- name: aadadminloginsid
+  value: 'a23138df-bac4-498f-ac9b-e10ac72555c3'
+- name: minimalTlsVersion
+  value: '1.2'
+- name: tenantId
+  value: '0abe8783-2c3e-4c42-9848-54e419bcdeb0'
+# Subscription
+- name: SubscriptionId
+  value: '60afef65-a07c-4c0d-9325-1a01d861eb85'
+# Variables related to resource group
+- name: RGModuleFilePath
+  value: modules/resourcegroup/resourcegroup.bicep
+- name: RGDeploymentName
+  value: IaC-TestDeployment-ResourceGroup
+- name: purposeShortRG
+  value: 'IaCPubTest'
+- name: detailedPurposeRG
+  value: 'resource group created to test resources before registry update'
+# Common deployment variables
+- name: envCode
+  value: 'dev'
+- name: location
+  value: 'norwayeast'
+- name: ownerteam
+  value: 'TEAM1'
+- name: assetowner
+  value: 'mohit sharma'
+- name: criticality
+  value: 'Low'
+- name: projectCode
+  value: 'TEM1'
+- name: locationCode
+  value: 'noe'
+- name: classification
+  value: 'Public'
+
+pool:
+  name: ubuntu
+
+stages:
+
+- stage: Lint
+  jobs:
+  - job: LintCode
+    displayName: Lint code
+    steps:
+      - script: |
+          az bicep build --file $(ModuleFilePath)
+        name: LintBicepCode
+        displayName: Run Bicep linter
+
+
+- stage: TestDeployment
+  jobs:
+  - job: DeployJob
+    steps:
+    - task: AzureResourceManagerTemplateDeployment@3
+      inputs:
+        deploymentScope: 'Subscription'
+        connectedServiceName: $(ServiceConnectionName2)
+        deploymentName: $(RGDeploymentName)
+        location: $(DeploymentLocation)
+        csmFile: $(RGModuleFilePath)
+        overrideParameters: '-envCode "$(envCode)" -location "$(location)" -ownerteam "$(ownerteam)" -assetowner "$(assetowner)" -criticality "$(criticality)" -projectCode "$(projectCode)" -classification "$(classification)" -purposeShort "$(purposeShortRG)" -detailedPurpose "$(detailedPurposeRG)"'
+        deploymentMode: 'Incremental'
+        deploymentOutputs: 'deploymentOutputs'
+
+    - bash: |
+        echo "##vso[task.setvariable variable=ResourceGroupScopeName]$(echo $DEPLOYMENT_OUTPUTS | jq -r '.resourcegroupName.value')"
+        
+      name: SaveDeploymentOutputs
+      displayName: Save deployment outputs into variables
+      env:
+        DEPLOYMENT_OUTPUTS: $(deploymentOutputs)
+
+    - bash: |
+        echo $(ResourceGroupScopeName)
+
+    - task: AzureResourceManagerTemplateDeployment@3
+      inputs:
+        connectedServiceName: $(ServiceConnectionName2)
+        deploymentName: $(DeploymentName)
+        location: $(DeploymentLocation)
+        resourceGroupName: $(ResourceGroupScopeName)
+        csmFile: $(ModuleFilePath)
+        overrideParameters: '-envCode "$(envCode)" -location "$(location)" -ownerteam "$(ownerteam)" -assetowner "$(assetowner)" -criticality "$(criticality)" -projectCode "$(projectCode)" -locationCode "$(locationCode)" -classification "$(classification)" -detailedPurpose "$(detailedPurpose)" -sequence "$(sequence)" -administratorLogin "$(administratorLogin)" -administratorLoginPassword "$(administratorLoginPassword)" -publicNetworkAccess "$(publicNetworkAccess)" -restrictOutboundNetworkAccess "$(restrictOutboundNetworkAccess)" -azureADOnlyAuthentication "$(azureADOnlyAuthentication)" -version "$(version)" -principalType "$(principalType)" -aadadminlogin "$(aadadminlogin)" -aadadminloginsid "$(aadadminloginsid)" -minimalTlsVersion "$(minimalTlsVersion)"  -tenantId "$(tenantId)"'
+
+- stage: Publish
+  jobs:
+  - job: Publish
+    steps:
+      - script: |
+          majorMinorVersionNumber=$(jq '(.version.major | tostring) + "." + (.version.minor | tostring)' $(ModuleMetadataFilePath) -r )
+          versionNumber="$majorMinorVersionNumber.$(Build.BuildNumber)"
+          echo "##vso[task.setvariable variable=ModuleVersion;]$versionNumber"
+        name: GetModuleVersionNumber
+        displayName: Get module version number
+      - task: AzureCLI@2
+        name: Publish
+        displayName: Publish module
+        inputs:
+          azureSubscription: $(ServiceConnectionName)
+          scriptType: 'bash'
+          scriptLocation: 'inlineScript'
+          inlineScript: |
+            az bicep publish \
+              --target 'br:$(ModuleRegistryServer)/$(ModuleName):$(ModuleVersion)' \
+              --file $(ModuleFilePath)
