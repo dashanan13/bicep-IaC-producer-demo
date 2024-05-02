@@ -1,0 +1,414 @@
+trigger:
+  batch: true
+  branches:
+    include:
+    - main
+  paths:
+    include:
+    - 'modules/functions/**'
+
+variables: 
+# Common pipeline variables
+- name: ServiceConnectionName1
+  value: IaC-Publish
+- name: ServiceConnectionName2
+  value: IaC-Test-RG
+- name: DeploymentLocation
+  value: norwayeast
+- name: ResourceGroupName
+  value: RG-Management
+# Variables related to resource
+- name: ModuleName
+  value: functionapps
+- name: ModuleRegistryServer
+  value: templatestore13.azurecr.io
+- name: ModuleFilePath
+  value: modules/functions/functions.bicep
+- name: ModuleMetadataFilePath
+  value: modules/functions/metadata.json
+- name: ResourceDeploymentName
+  value: IaC-TestDeployment-functions
+- name: detailedPurpose
+  value: 'Windows Function Apps with dotnet 7.2 created for testing the template' 
+- name: sequence
+  value: 006
+- name: appkind
+  value: 'linux'
+- name: publicNetworkAccess
+  value: 'Disabled'
+- name: selectedlanguage
+  value: 'container'
+- name: use32BitWorkerProcess
+  value: true
+- name: netVersionbase
+  value: 'v6.0'
+- name: netVersionwin
+  value: '17'
+- name: netVersionlnx
+  value: 'DOCKER|mcr.microsoft.com/azure-functions/dotnet:4-appservice-quickstart'
+# Variables related to Test script
+- name: TsTModuleFilePath
+  value: modules/functions/testme.bicep
+# Subscription
+- name: SubscriptionId
+  value: '60afef65-a07c-4c0d-9325-1a01d861eb85'
+# Variables related to resource group
+- name: RGModuleFilePath
+  value: modules/resourcegroup/resourcegroup.bicep
+- name: RGDeploymentName
+  value: IaC-TestDeployment-ResourceGroup
+- name: purposeShortRG
+  value: 'IaCPubTest'
+- name: detailedPurposeRG
+  value: 'resource group created to test resources before registry update'
+# Variables related to storage account resource
+- name: SAModuleName
+  value: storageaccount
+- name: SAModuleFilePath
+  value: modules/storageaccount/storageaccount.bicep
+- name: SADeploymentName
+  value: IaC-TestDeployment-StorageAccount
+- name: SAdetailedPurpose
+  value: 'Storage account created for testing the template'
+- name: SAsequence
+  value: 001
+- name: SAskuname
+  value: 'Standard_LRS'
+# Variables related to log analytics workspace
+- name: LawModuleFilePath
+  value: modules/law/law.bicep
+- name: LawResourceDeploymentName
+  value: IaC-TestDeployment-law
+- name: LawdetailedPurpose
+  value: 'Law created for testing the template'
+- name: Lawskuname
+  value: 'PerGB2018'
+- name: Lawsequence
+  value: 001
+- name: LawretentionInDays
+  value: 120
+# Variables related to Application Insight
+- name: AppInModuleFilePath
+  value: modules/applicationinsight/applicationinsight.bicep
+- name: AppInResourceDeploymentName
+  value: IaC-TestDeployment-ApplicationInsight
+- name: AppIndetailedPurpose
+  value: 'ApplicationInsight created for testing the template'
+- name: AppInapplicationkind
+  value: 'web'
+- name: AppInapplicationtype
+  value: 'web'
+- name: AppInsequence
+  value: 001
+# Variables related to App Service Plan
+- name: AppplnModuleFilePath
+  value: modules/appserviceplan/appserviceplan.bicep
+- name: AppplnResourceDeploymentName
+  value: IaC-TestDeployment-appserviceplan
+- name: AppplndetailedPurpose
+  value: 'Appserviceplan created for testing the template'
+- name: Appplnsequence
+  value: 001
+- name: Appplnplankind
+  value: 'linux'
+- name: plantier
+  value: 'Premium v3'
+- name: planname
+  value: 'P2mv3'
+# Common deployment variables
+- name: envCode
+  value: 'dev'
+- name: location
+  value: 'norwayeast'
+- name: ownerteam
+  value: 'Platform'
+- name: assetowner
+  value: 'mohit sharma'
+- name: criticality
+  value: 'Low'
+- name: projectCode
+  value: 'PTF'
+- name: locationCode
+  value: 'noe'
+- name: classification
+  value: 'Public'
+
+
+
+
+pool:
+  vmImage: ubuntu-latest
+
+stages:
+
+- stage: Lint
+  jobs:
+  - job: LintCode
+    displayName: Lint code
+    steps:
+      - script: |
+          az bicep build --file $(ModuleFilePath)
+        name: LintBicepCode
+        displayName: Run Bicep linter
+
+
+- stage: TestDeployment
+  jobs:
+  - job: DeployJob
+    steps:
+
+    # Deploy Resource Group
+    - task: AzureResourceManagerTemplateDeployment@3
+      inputs:
+        deploymentScope: 'Subscription'
+        connectedServiceName: $(ServiceConnectionName2)
+        deploymentName: $(RGDeploymentName)
+        location: $(DeploymentLocation)
+        csmFile: $(RGModuleFilePath)
+        deploymentMode: 'Incremental'
+        deploymentOutputs: 'deploymentOutputs'
+        overrideParameters: 
+          '-envCode "$(envCode)" -location "$(location)" 
+          -ownerteam "$(ownerteam)" -assetowner "$(assetowner)" 
+          -criticality "$(criticality)" -projectCode "$(projectCode)" 
+          -classification "$(classification)" -purposeShort "$(purposeShortRG)" -detailedPurpose "$(detailedPurposeRG)"'
+
+    - bash: |
+        echo "##vso[task.setvariable variable=ResourceGroupScopeName]$(echo $DEPLOYMENT_OUTPUTS | jq -r '.resourcegroupName.value')"
+        
+      name: SaveDeploymentOutputs
+      displayName: Save deployment outputs into variables
+      env:
+        DEPLOYMENT_OUTPUTS: $(deploymentOutputs)
+
+    - bash: |
+        echo $(ResourceGroupScopeName)
+
+
+    # Deploy Test script
+    - task: AzureResourceManagerTemplateDeployment@3
+      inputs:
+        connectedServiceName: $(ServiceConnectionName2)
+        resourceGroupName: $(ResourceGroupScopeName)
+        deploymentName: "TESTINGIT"
+        location: $(DeploymentLocation)
+        csmFile: $(TsTModuleFilePath)
+        deploymentMode: 'Incremental'
+        deploymentOutputs: 'tstdeploymentOutputs'
+        
+
+    - bash: |
+        echo "##vso[task.setvariable variable=FNnetver]$(echo $DEPLOYMENT_OUTPUTS_TST | jq -r '.fnnetVersionlnx.value')"
+        
+      name: SaveDeploymentOutputsTest
+      displayName: Save Test deployment outputs into variables
+      env:
+        DEPLOYMENT_OUTPUTS_TST: $(tstdeploymentOutputs)
+
+    - bash: |
+        echo "$(netVersionlnx)"
+
+
+
+    # Deploy App Service Plan
+    - task: AzureResourceManagerTemplateDeployment@3
+      inputs:
+        connectedServiceName: $(ServiceConnectionName2)
+        deploymentName: $(AppplnResourceDeploymentName)
+        location: $(DeploymentLocation)
+        resourceGroupName: $(ResourceGroupScopeName)
+        csmFile: $(AppplnModuleFilePath)
+        deploymentMode: 'Incremental'
+        deploymentOutputs: 'deploymentOutputsappplan'
+        overrideParameters: 
+          '-envCode "$(envCode)" 
+          -location "$(location)" 
+          -ownerteam "$(ownerteam)" 
+          -assetowner "$(assetowner)" 
+          -criticality "$(criticality)" 
+          -projectCode "$(projectCode)" 
+          -locationCode "$(locationCode)" 
+          -classification "$(classification)" 
+          -detailedPurpose "$(AppplndetailedPurpose)" 
+          -plantier  "$(plantier)"
+          -planname "$(planname)"
+          -plankind "$(Appplnplankind)"
+          -sequence "$(Appplnsequence)"'
+
+    - bash: |
+        echo "##vso[task.setvariable variable=AppserviceplanId]$(echo $DEPLOYMENT_OUTPUTS_APPPLAN | jq -r '.appserviceplanId.value')"
+        
+      name: SaveAppPlanOutputs
+      displayName: Save App Service Plan deployment outputs into variables
+      env:
+        DEPLOYMENT_OUTPUTS_APPPLAN: $(deploymentOutputsappplan)
+
+    - bash: |
+        echo $(AppserviceplanId)
+
+    # Deploy Storage Account
+    - task: AzureResourceManagerTemplateDeployment@3
+      inputs:
+        connectedServiceName: $(ServiceConnectionName2)
+        deploymentName: $(SADeploymentName)
+        location: $(DeploymentLocation)
+        resourceGroupName: $(ResourceGroupScopeName)
+        csmFile: $(SAModuleFilePath)
+        deploymentMode: 'Incremental'
+        deploymentOutputs: 'deploymentOutputsSA'
+        overrideParameters: 
+          '-envCode "$(envCode)" -location "$(location)" 
+          -ownerteam "$(ownerteam)" -assetowner "$(assetowner)" 
+          -criticality "$(criticality)" -projectCode "$(projectCode)" 
+          -locationCode "$(locationCode)" -classification "$(classification)" 
+          -detailedPurpose "$(SAdetailedPurpose)" -sequence "$(SAsequence)" -storageSkuName "$(SAskuname)"'
+
+    - bash: |
+        echo "##vso[task.setvariable variable=storageAccountName]$(echo $DEPLOYMENT_OUTPUTS_SA | jq -r '.storageName.value')"
+        echo "##vso[task.setvariable variable=storageAccountID]$(echo $DEPLOYMENT_OUTPUTS_SA | jq -r '.storageId.value')"
+        
+      name: SaveAppSAOutputs
+      displayName: Save Storage Account deployment outputs into variables
+      env:
+        DEPLOYMENT_OUTPUTS_SA: $(deploymentOutputsSA)
+
+    # Deploy Log Analytics Workspace
+    - task: AzureResourceManagerTemplateDeployment@3
+      inputs:
+        connectedServiceName: $(ServiceConnectionName2)
+        deploymentName: $(LawResourceDeploymentName)
+        location: $(DeploymentLocation)
+        resourceGroupName: $(ResourceGroupScopeName)
+        csmFile: $(LawModuleFilePath)
+        deploymentMode: 'Incremental'
+        deploymentOutputs: 'deploymentOutputslaw'
+        overrideParameters: 
+          '-envCode "$(envCode)" 
+          -location "$(location)" 
+          -ownerteam "$(ownerteam)" 
+          -assetowner "$(assetowner)" 
+          -criticality "$(criticality)" 
+          -projectCode "$(projectCode)" 
+          -locationCode "$(locationCode)" 
+          -classification "$(classification)" 
+          -detailedPurpose "$(LawdetailedPurpose)" 
+          -sku "$(Lawskuname)"
+          -retentionInDays "$(LawretentionInDays)"
+          -sequence "$(Lawsequence)"'
+
+    - bash: |
+        echo "##vso[task.setvariable variable=lawID]$(echo $DEPLOYMENT_OUTPUTS_LAW | jq -r '.logAnalyticsWorkspaceId.value')"
+        
+      name: SaveLawOutputs
+      displayName: Save Log Analytics Workspace deployment outputs into variables
+      env:
+        DEPLOYMENT_OUTPUTS_LAW: $(deploymentOutputslaw)
+
+    - bash: |
+        echo $(lawID)
+
+    # Deploy Application Insight
+    - task: AzureResourceManagerTemplateDeployment@3
+      inputs:
+        connectedServiceName: $(ServiceConnectionName2)
+        deploymentName: $(AppInResourceDeploymentName)
+        location: $(DeploymentLocation)
+        resourceGroupName: $(ResourceGroupScopeName)
+        csmFile: $(AppInModuleFilePath)
+        deploymentMode: 'Incremental'
+        deploymentOutputs: 'deploymentOutputsappinsgt'
+        overrideParameters: 
+          '-envCode "$(envCode)" 
+          -location "$(location)" 
+          -ownerteam "$(ownerteam)" 
+          -assetowner "$(assetowner)" 
+          -criticality "$(criticality)" 
+          -projectCode "$(projectCode)" 
+          -locationCode "$(locationCode)" 
+          -classification "$(classification)" 
+          -detailedPurpose "$(AppIndetailedPurpose)" 
+          -applicationkind "$(AppInapplicationkind)"
+          -applicationtype "$(AppInapplicationtype)"
+          -sequence "$(AppInsequence)"
+          -workspaceResourceId "$(lawID)"'
+
+    - bash: |
+        echo "##vso[task.setvariable variable=Appinsinstid]$(echo $DEPLOYMENT_OUTPUTS_APIN | jq -r '.appinsightInstrmntID.value')"
+        echo "##vso[task.setvariable variable=Appinsid]$(echo $DEPLOYMENT_OUTPUTS_APIN | jq -r '.appinsightId.value')"
+        echo "##vso[task.setvariable variable=Appinsname]$(echo $DEPLOYMENT_OUTPUTS_APIN | jq -r '.appinsightName.value')"
+        
+      name: SaveAppInsOutputs
+      displayName: Save Application Insight deployment outputs into variables
+      env:
+        DEPLOYMENT_OUTPUTS_APIN: $(deploymentOutputsappinsgt)
+
+
+    # Deploy function app
+    - task: AzureResourceManagerTemplateDeployment@3
+      inputs:
+        connectedServiceName: $(ServiceConnectionName2)
+        deploymentName: $(ResourceDeploymentName)
+        location: $(DeploymentLocation)
+        resourceGroupName: $(ResourceGroupScopeName)
+        csmFile: $(ModuleFilePath)
+        deploymentMode: 'Incremental'
+        deploymentOutputs: 'deploymentOutputsfn'
+        overrideParameters: 
+          '-envCode "$(envCode)" 
+          -location "$(location)" 
+          -ownerteam "$(ownerteam)" 
+          -assetowner "$(assetowner)" 
+          -criticality "$(criticality)" 
+          -projectCode "$(projectCode)" 
+          -locationCode "$(locationCode)" 
+          -classification "$(classification)" 
+          -detailedPurpose "$(detailedPurpose)" 
+          -publicNetworkAccess "$(publicNetworkAccess)"
+          -appServicePlanId "$(AppserviceplanId)"
+          -storageAccountName "$(storageAccountName)"
+          -storageAccountID "$(storageAccountID)"
+          -storageSubID "$(SubscriptionId)"
+          -storageRG "$(ResourceGroupScopeName)"
+          -appInsghtInstKey "$(Appinsinstid)"
+          -sequence "$(sequence)"
+          -appkind "$(appkind)"
+          -netVersionbase "$(netVersionbase)"
+          -netVersionwin  "$(netVersionwin)"
+          -netVersionlnx "$(netVersionlnx)"
+          -selectedlanguage "$(selectedlanguage)"'
+
+    - bash: |
+        echo "##vso[task.setvariable variable=Fnid]$(echo $DEPLOYMENT_OUTPUTS_FN | jq -r '.functionAppId.value')"
+        echo "##vso[task.setvariable variable=FnName]$(echo $DEPLOYMENT_OUTPUTS_FN | jq -r '.functionAppName.value')"
+        
+      name: SaveAppFunctionOutputs
+      displayName: Save deployment outputs into variables
+      env:
+        DEPLOYMENT_OUTPUTS_FN: $(deploymentOutputsfn)
+
+
+
+- stage: Publish
+  dependsOn: 
+  - TestDeployment
+  condition: succeeded('TestDeployment')
+  jobs:
+  - job: Publish
+    steps:
+      - script: |
+          majorMinorVersionNumber=$(jq '(.version.major | tostring) + "." + (.version.minor | tostring)' $(ModuleMetadataFilePath) -r )
+          versionNumber="$majorMinorVersionNumber.$(Build.BuildNumber)"
+          echo "##vso[task.setvariable variable=ModuleVersion;]$versionNumber"
+        name: GetModuleVersionNumber
+        displayName: Get module version number
+      - task: AzureCLI@2
+        name: Publish
+        displayName: Publish module
+        inputs:
+          azureSubscription: $(ServiceConnectionName1)
+          scriptType: 'bash'
+          scriptLocation: 'inlineScript'
+          inlineScript: |
+            az bicep publish \
+              --target 'br:$(ModuleRegistryServer)/$(ModuleName):$(ModuleVersion)' \
+              --file $(ModuleFilePath)
